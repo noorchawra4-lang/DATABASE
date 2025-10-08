@@ -1,8 +1,9 @@
 # main.py
 from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel,EmailStr
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from typing import List
 
 # -------------------- Database URL --------------------
 
@@ -26,12 +27,15 @@ class User(Base):
 # -------------------- Schema -----------------------
 class UserSchema(BaseModel):
     name: str
-    email: str
+    email: EmailStr
 
 class get_user (BaseModel):
     id : int
     name:str
-    email: str
+    email: EmailStr
+    # class config:
+    #     orm_mode:True
+
 
 
 
@@ -69,7 +73,7 @@ def add_user(userData: UserSchema, db: Session = Depends(get_db)):
 
     return {"id": new_user.id, "name": new_user.name, "email": new_user.email}
 
-@app.get("/user")
+@app.get("/userget",response_model=List[get_user])
 def get_users(db: Session = Depends(get_db)):
     users = db.query(get_user).all()
     return users
