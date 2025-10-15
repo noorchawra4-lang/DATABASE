@@ -3,119 +3,163 @@ from typing import List
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
+import random
+from passlib.context import CryptContext
 
-# ------------------- DATABASE SETUP -------------------
+# ================ Base setup ================
 Base = declarative_base()
+app = FastAPI()
+
 DATABASE_URL = "postgresql+psycopg2://postgres:virat@localhost:5432/classdata"
 engine = create_engine(DATABASE_URL, echo=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-app = FastAPI()
+# Password hashing context
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
 
-def get_db():
-    db: Session = SessionLocal()
+def get_db_data():
+    db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-# ------------------- MODELS -------------------
+
+# ================ Models ================
 class Register(Base):
     __tablename__ = "UserRegister"
-    user_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     email = Column(String(200), nullable=False, unique=True)
-    password = Column(String(100), nullable=False)
+    password = Column(String(255), nullable=False)
+    otp = Column(Integer, nullable=True)
 
-# ------------------- SCHEMAS -------------------
-class Signup(BaseModel):
+
+# ================ Schemas ================
+class RegisterA(BaseModel):
     name: str
     email: EmailStr
     password: str
 
-class LoginSchema(BaseModel):
+class RegisterB(BaseModel):
     email: EmailStr
     password: str
 
-class ResponseModel(BaseModel):
-    success: bool
-    status: int
-    msg: str
-    model_config = {"from_attributes": True}
+class ChangePassword(BaseModel):
+    old_password: str
+    new_password: str
+
+class Forget(BaseModel):
+    otp: int
+    new_password: str
+
+class OTP(BaseModel):
+    email: EmailStr
 
 class GetData(BaseModel):
     user_id: int
     name: str
     email: str
-    model_config = {"from_attributes": True}
+    class Config:
+        orm_mode = True
 
-class UpdateUser(BaseModel):
-    name: str
-    email: EmailStr
-    new_password: str
-    model_config = {"from_attributes": True}
 
-# ------------------- USER ROUTES -------------------
-#1
+# ================ Hash helpers ================
+def hash_password(plain_password: str) -> str:
+    return pwd_context.hash(plain_password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+# ================ Register ===================
 @app.post("/register", response_model=GetData)
-def register_user(user_in: Signup, db: Session = Depends(get_db)):
-    user = db.query(Register).filter(Register.email == user_in.email).first()
-    if user:
-        raise HTTPException(status_code=400, detail=f"User with email '{user_in.email}' already exists")
-    
-    new_user = Register(name=user_in.name, email=user_in.email, password=user_in.password)
+def add_user(user_in: RegisterA, db: Session = Depends(get_db_data)):
+    existing = db.query(Register).filter(Register.email == user_in.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="User already exists")
+    hashed_pwd = hash_password(user_in.password)
+    new_user = Register(name=user_in.name, email=user_in.email, password=hashed_pwd)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return new_user
-#2
-@app.get("/get_all", response_model=List[GetData])
-def get_all(db: Session = Depends(get_db)):
-    users = db.query(Register).all()
-    return users
-#3
-@app.post("/login")
-def login(user: LoginSchema, db: Session = Depends(get_db)):
-    db_user = db.query(Register).filter(Register.email == user.email, Register.password == user.password).first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"success": True, "status": 200, "msg": "Login successful", "data": GetData.from_orm(db_user)}
 
-#4
-@app.put("/update/{user_id}")
-def update_user(user_id: int, user: UpdateUser, db: Session = Depends(get_db)):
-    # Fetch user from DB
-    db_user = db.query(Register).filter(Register.user_id == user_id).first()
-    
-    if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
 
-    
-    db_user["name"] = user.name
-    db_user["email"] = user.email
-    db_user["password"] = user.new_password
+# ================ Login ======================
+@app.post("/login", response_model=GetData)
+def login_user(data: RegisterB, db: Session = Depends(get_db_data)):
+    user = db.query(Register).filter(Register.email == data.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid email or password")
+    if not verify_password(data.password, user.password):
+        raise HTTPException(status_code=400, detail="Invalid email or password")
+    return user
 
-    db.commit()
-    db.refresh(db_user)
 
-    return {
-        "success": True,
-        "status": 200,
-        "msg": "User updated successfully",
-        "data": {
-            "user_id": db_user.user_id,
-            "name": db_user.name,
-            "email": db_user.email
-        }
-    }
-#5
-@app.get("/user_get_id/{user_id}")
-def get_user_by_user_id(user_id: int, db: Session = Depends(get_db)):
+# ================ Change Password ==================
+@app.patch("/update/{user_id}")
+def update_password(user_id: int, data: ChangePassword, db: Session = Depends(get_db_data)):
     user = db.query(Register).filter(Register.user_id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User ID not found")
-    return {"success": True, "status": 200, "msg": "User retrieved successfully", "data": GetData.from_orm(user)}
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(data.old_password, user.password):
+        raise HTTPException(status_code=400, detail="Old password incorrect")
+
+    user.password = hash_password(data.new_password)
+    db.commit()
+    db.refresh(user)
+    return {"message": "Password updated successfully"}
+
+
+# ================ Send OTP ==================
+@app.post("/sendotp")
+def send_otp(data: OTP, db: Session = Depends(get_db_data)):
+    user = db.query(Register).filter(Register.email == data.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    otp_value = random.randint(1000, 9999)
+    user.otp = otp_value
+    db.commit()
+    return {"message": "OTP generated successfully", "otp": otp_value}  # (For testing only)
+
+
+# ================ Forget / Reset Password ==================
+@app.patch("/forget/{email}")
+def forget_password(email: str, data: Forget, db: Session = Depends(get_db_data)):
+    user = db.query(Register).filter(Register.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.otp != data.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    user.password = hash_password(data.new_password)
+    user.otp = None
+    db.commit()
+    db.refresh(user)
+    return {"message": "Password reset successfully"}
+
+
+# ================ Get All Users ==================
+@app.get("/get_all", response_model=List[GetData])
+def get_all_users(db: Session = Depends(get_db_data)):
+    users = db.query(Register).all()
+    if not users:
+        raise HTTPException(status_code=404, detail="No users found")
+    return users
+
+
+# ================ Get By ID ==================
+@app.get("/user/{user_id}", response_model=GetData)
+def get_user_by_id(user_id: int, db: Session = Depends(get_db_data)):
+    user = db.query(Register).filter(Register.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user

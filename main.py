@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import List, Optional
-
-from fastapi import FastAPI, HTTPException, Depends, Body
+from fastapi import FastAPI, HTTPException,Depends, Body
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, or_, and_
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -21,7 +20,7 @@ class User(Base):
     username = Column(String(150), nullable=False)
     email = Column(String(255), nullable=False, unique=True)
     password = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Post(Base):
     __tablename__ = "posts"
@@ -29,28 +28,28 @@ class Post(Base):
     user_id = Column(Integer, nullable=False) 
     title = Column(String(300), nullable=True)
     content = Column(String(2000), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Follow(Base):
     __tablename__ = "follows"
     id = Column(Integer, primary_key=True)
     followed_by = Column(Integer, nullable=False)  
     followed_to = Column(Integer, nullable=False)  
-    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Block(Base):
     __tablename__ = "blocks"
     id = Column(Integer, primary_key=True)
     block_by = Column(Integer, nullable=False)
     block_to = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Like(Base):
     __tablename__ = "likes"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False)
     post_id = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 # ---------------- Schemas ----------------
 class UserSignup(BaseModel):
